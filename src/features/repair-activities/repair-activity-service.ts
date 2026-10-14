@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { repairActivityConsentVersion } from "@/config/repair-activities";
+import { issueCheckInToken } from "@/features/repair-activities/check-in-token";
 import {
   issueRegistrationEditToken,
   verifyRegistrationEditToken,
@@ -80,6 +81,11 @@ export type RegistrationPublicView = {
   deviceModel: string | null;
   status: string;
   createdAt: string;
+  /**
+   * 预约二维码携带的签到令牌（issue #126）：HMAC 自包含、不落库，
+   * 有效期覆盖签到窗口。前端用它实时生成二维码，到场后由工作人员扫码签到。
+   */
+  checkInToken: string;
 };
 
 export type RegistrationLookupView = RegistrationPublicView & {
@@ -123,6 +129,15 @@ const effectiveStatusFilter = {
   deletedAt: null as null,
   status: { in: [...EFFECTIVE_REGISTRATION_STATUSES] },
 };
+
+/**
+ * 签到令牌有效期（issue #126）：活动日结束后 +24h 缓冲。
+ * 签到窗口本身由 `assertActivityStaffOpen`（报名截止起）在服务端每次校验，
+ * 令牌有效期只需要保证「正常的现场签到时段内二维码不会先过期」。
+ */
+function checkInTokenExpiresAt(activityAt: Date): Date {
+  return new Date(activityEndExclusive(activityAt).getTime() + 24 * 60 * 60 * 1000);
+}
 
 async function countEffectiveRegistrations(activityId: string): Promise<number> {
   return getDb().repairActivityRegistration.count({
@@ -624,6 +639,7 @@ export const repairActivityService = {
         deviceModel,
         status: created.status,
         createdAt: created.createdAt.toISOString(),
+        checkInToken: issueCheckInToken(created.id, activityId, checkInTokenExpiresAt(activity.activityAt)),
       };
     });
   },
@@ -671,6 +687,7 @@ export const repairActivityService = {
       createdAt: reg.createdAt.toISOString(),
       editToken: token.editToken,
       editTokenExpiresAt: token.expiresAt,
+      checkInToken: issueCheckInToken(reg.id, activityId, checkInTokenExpiresAt(activity.activityAt)),
     };
   },
 
@@ -742,6 +759,7 @@ export const repairActivityService = {
         deviceModel: updated.deviceModel,
         status: updated.status,
         createdAt: updated.createdAt.toISOString(),
+        checkInToken: issueCheckInToken(updated.id, activityId, checkInTokenExpiresAt(activity.activityAt)),
       };
     });
   },

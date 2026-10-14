@@ -7749,6 +7749,33 @@ html[data-theme="black-yellow"] {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+/* 预约二维码（issue #126）：canvas 固定白底以保证任意主题下可扫，外层只负责留白与对齐。 */
+.activity-detail__qr {
+  display: grid;
+  justify-items: start;
+  gap: var(--s-2);
+  padding-block: var(--s-2);
+}
+.activity-qr {
+  display: inline-block;
+  padding: var(--s-2);
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.activity-qr canvas {
+  display: block;
+}
+/* 扫码签到取景框（issue #126）：固定比例防止相机启动瞬间页面高度跳动。 */
+.activity-scan__video {
+  display: block;
+  width: min(100%, 20rem);
+  aspect-ratio: 1;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface-1);
+}
 .admin-capacity {
   font-weight: 700;
   font-variant-numeric: tabular-nums;

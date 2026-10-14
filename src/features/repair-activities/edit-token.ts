@@ -66,3 +66,8 @@ export function verifyRegistrationEditToken(
 function sign(body: string): string {
   return createHmac("sha256", getServerEnv().AUTH_SECRET).update(body).digest("base64url");
 }
+
+/** check-in-token.ts 复用同一套 HMAC 签名（同一 AUTH_SECRET、同一 base64url 约定）。 */
+export function signTokenBody(body: string): string {
+  return sign(body);
+}

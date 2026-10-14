@@ -71,3 +71,26 @@ export function bodyRegistrationIds(body: Record<string, unknown>): string[] {
   }
   return ids;
 }
+
+/** 扫码签到（issue #126）：body.tokens 是 1–100 个签到令牌，与 registrationIds 互斥。 */
+export function bodyCheckInTokens(body: Record<string, unknown>): string[] {
+  const raw = body.tokens;
+  if (!Array.isArray(raw)) {
+    throw new AppError("VALIDATION_FAILED", "tokens 必须是数组", {
+      fieldErrors: { tokens: ["请提供签到二维码令牌"] },
+    });
+  }
+  const tokens = raw.map((item) => (typeof item === "string" ? item.trim() : "")).filter(Boolean);
+  if (tokens.length === 0) {
+    throw new AppError("VALIDATION_FAILED", "请至少提供一个签到二维码", {
+      fieldErrors: { tokens: ["请至少提供一个"] },
+    });
+  }
+  if (tokens.length > 100) {
+    throw new AppError("VALIDATION_FAILED", "单次最多签到 100 条");
+  }
+  if (tokens.some((token) => token.length > 512)) {
+    throw new AppError("VALIDATION_FAILED", "签到令牌无效");
+  }
+  return tokens;
+}

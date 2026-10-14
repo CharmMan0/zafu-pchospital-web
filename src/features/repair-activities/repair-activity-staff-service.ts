@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@/generated/prisma/client";
 
+import { verifyCheckInToken } from "@/features/repair-activities/check-in-token";
 import { maskActivityPhone } from "@/features/repair-activities/phone-mask";
 import {
   canCheckInRegistration,
@@ -231,6 +232,91 @@ async function findPendingServeDraft(memberProfileId: string): Promise<StaffServ
     ownerName: draft.ownerName ?? draft.activityRegistration?.name ?? "客户",
     activityTitle: draft.activityRegistration?.activity.title ?? "",
   };
+}
+
+/** 签到来源：手动勾选（仅管理员）或扫预约二维码（issue #126，成员兜底也可用）。审计用。 */
+type CheckInVia = "manual" | "qr_token";
+
+/**
+ * 签到核心事务：手动勾选与扫码共用（issue #126）。
+ * 调用方负责权限（管理员 / 任意成员）与入参规范化，这里统一锁活动行、跑状态机、写审计。
+ */
+async function runCheckInTransaction(
+  activityId: string,
+  uniqueIds: string[],
+  updates: Map<string, RepairActivityIssueType>,
+  actor: AuthorizedActor,
+  member: { id: string },
+  via: CheckInVia,
+): Promise<{ checkedIn: StaffRegistrationView[] }> {
+  return inSerializableTransaction(async (tx) => {
+    await requireStaffOpen(tx, activityId);
+    const now = new Date();
+    const checkedIn: StaffRegistrationView[] = [];
+
+    for (const registrationId of uniqueIds) {
+      const reg = await tx.repairActivityRegistration.findFirst({
+        where: { id: registrationId, activityId, deletedAt: null },
+      });
+      if (!reg) {
+        throw new AppError("ACTIVITY_REGISTRATION_NOT_FOUND", "报名记录不存在");
+      }
+      if (reg.status === "CHECKED_IN") {
+        if (updates.has(registrationId) && updates.get(registrationId) !== reg.issueType) {
+          throw new AppError(
+            "ACTIVITY_REGISTRATION_STATE_INVALID",
+            "已入队客户不可在签到重试中修改故障类型",
+          );
+        }
+        checkedIn.push(toStaffReg(reg));
+        continue;
+      }
+      if (!canCheckInRegistration(reg.status)) {
+        throw new AppError(
+          "ACTIVITY_REGISTRATION_STATE_INVALID",
+          `报名「${reg.name}」当前状态不可签到`,
+        );
+      }
+      const updated = await tx.repairActivityRegistration.update({
+        where: { id: registrationId },
+        data: {
+          status: "CHECKED_IN",
+          checkedInAt: now,
+          ...(updates.has(registrationId) ? { issueType: updates.get(registrationId) } : {}),
+        },
+      });
+      if (updated.issueType !== reg.issueType) {
+        await appendAuditLog(tx, {
+          actor,
+          actorType: "USER",
+          actorUserId: actor.userId,
+          action: "repair_activity.registration_issue_type_updated",
+          targetType: "RepairActivityRegistration",
+          targetId: registrationId,
+          result: "SUCCESS",
+          before: { issueType: reg.issueType },
+          after: { issueType: updated.issueType },
+        });
+      }
+      checkedIn.push(toStaffReg(updated));
+    }
+
+    await appendAuditLog(tx, {
+      actor,
+      actorType: "USER",
+      actorUserId: actor.userId,
+      action: "repair_activity.registrations_checked_in",
+      targetType: "RepairActivity",
+      targetId: activityId,
+      result: "SUCCESS",
+      after: {
+        registrationIds: checkedIn.map((r) => r.id),
+        memberProfileId: member.id,
+        via,
+      },
+    });
+    return { checkedIn };
+  });
 }
 
 function toListItem(
@@ -486,73 +572,62 @@ export const repairActivityStaffService = {
       ]),
     );
 
-    return inSerializableTransaction(async (tx) => {
-      await requireStaffOpen(tx, activityId);
-      const now = new Date();
-      const checkedIn: StaffRegistrationView[] = [];
+    return runCheckInTransaction(activityId, uniqueIds, updates, actor, member, "manual");
+  },
 
-      for (const registrationId of uniqueIds) {
-        const reg = await tx.repairActivityRegistration.findFirst({
-          where: { id: registrationId, activityId, deletedAt: null },
-        });
-        if (!reg) {
-          throw new AppError("ACTIVITY_REGISTRATION_NOT_FOUND", "报名记录不存在");
-        }
-        if (reg.status === "CHECKED_IN") {
-          if (updates.has(registrationId) && updates.get(registrationId) !== reg.issueType) {
-            throw new AppError(
-              "ACTIVITY_REGISTRATION_STATE_INVALID",
-              "已入队客户不可在签到重试中修改故障类型",
-            );
-          }
-          checkedIn.push(toStaffReg(reg));
-          continue;
-        }
-        if (!canCheckInRegistration(reg.status)) {
-          throw new AppError(
-            "ACTIVITY_REGISTRATION_STATE_INVALID",
-            `报名「${reg.name}」当前状态不可签到`,
-          );
-        }
-        const updated = await tx.repairActivityRegistration.update({
-          where: { id: registrationId },
-          data: {
-            status: "CHECKED_IN",
-            checkedInAt: now,
-            ...(updates.has(registrationId) ? { issueType: updates.get(registrationId) } : {}),
-          },
-        });
-        if (updated.issueType !== reg.issueType) {
-          await appendAuditLog(tx, {
-            actor,
-            actorType: "USER",
-            actorUserId: actor.userId,
-            action: "repair_activity.registration_issue_type_updated",
-            targetType: "RepairActivityRegistration",
-            targetId: registrationId,
-            result: "SUCCESS",
-            before: { issueType: reg.issueType },
-            after: { issueType: updated.issueType },
-          });
-        }
-        checkedIn.push(toStaffReg(updated));
-      }
+  /**
+   * 扫预约二维码签到（issue #126）：成员兜底能力。
+   * 与手动勾选不同，这里只要求 activity:staff —— 客户到场出示令牌本身就是现场凭证；
+   * 手动选择客户（registrationIds 路径）仍只对管理员开放（issue #108）。
+   */
+  async checkInByTokens(
+    activityId: string,
+    tokens: string[],
+    actor: AuthorizedActor,
+  ): Promise<{ checkedIn: StaffRegistrationView[] }> {
+    const member = await requireStaffMember(actor);
+    await loadActivityOrThrow(activityId);
+    await requireAttendance(activityId, member.id);
 
-      await appendAuditLog(tx, {
-        actor,
-        actorType: "USER",
-        actorUserId: actor.userId,
-        action: "repair_activity.registrations_checked_in",
-        targetType: "RepairActivity",
-        targetId: activityId,
-        result: "SUCCESS",
-        after: {
-          registrationIds: checkedIn.map((r) => r.id),
-          memberProfileId: member.id,
-        },
+    const uniqueTokens = [...new Set(tokens.map((token) => token.trim()).filter(Boolean))];
+    if (uniqueTokens.length === 0) {
+      throw new AppError("VALIDATION_FAILED", "请至少提供一个签到二维码", {
+        fieldErrors: { tokens: ["请至少提供一个"] },
       });
-      return { checkedIn };
+    }
+    if (uniqueTokens.length > 100) {
+      throw new AppError("VALIDATION_FAILED", "单次最多签到 100 条");
+    }
+    // 验签在事务外做：令牌是无状态的，非法令牌直接 403，不进锁。
+    const uniqueIds = [
+      ...new Set(uniqueTokens.map((token) => verifyCheckInToken(token, activityId).registrationId)),
+    ];
+
+    return runCheckInTransaction(activityId, uniqueIds, new Map(), actor, member, "qr_token");
+  },
+
+  /**
+   * 扫码后的确认预览（issue #126）：把令牌解析成脱敏报名视图，
+   * 供工作人员在点「确认签到」前核对客户信息。只读，不写审计（签到成功本身有审计）。
+   */
+  async previewCheckInToken(
+    activityId: string,
+    token: string,
+    actor: AuthorizedActor,
+  ): Promise<StaffRegistrationView> {
+    const member = await requireStaffMember(actor);
+    const activity = await loadActivityOrThrow(activityId);
+    assertActivityStaffOpen(activity.signupClosesAt);
+    await requireAttendance(activityId, member.id);
+
+    const { registrationId } = verifyCheckInToken(token, activityId);
+    const reg = await getDb().repairActivityRegistration.findFirst({
+      where: { id: registrationId, activityId, deletedAt: null },
     });
+    if (!reg) {
+      throw new AppError("ACTIVITY_REGISTRATION_NOT_FOUND", "报名记录不存在或已删除");
+    }
+    return toStaffReg(reg);
   },
 
   async withdraw(

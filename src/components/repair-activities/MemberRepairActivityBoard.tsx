@@ -18,12 +18,17 @@ import {
   formatShanghaiTime,
 } from "@/components/repair-activities/activity-format";
 import { RegistrationPhone } from "@/components/repair-activities/RegistrationPhone";
+import { ScanCheckInDialog } from "@/components/repair-activities/ScanCheckInDialog";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Icon } from "@/components/ui/Icon";
 import { repairStatusLabels } from "@/config/repairs";
-import { memberRepairActivitiesCopy, repairActivitiesPage } from "@/config/repair-activities";
+import {
+  memberRepairActivitiesCopy,
+  repairActivitiesPage,
+  repairActivityCheckInCopy,
+} from "@/config/repair-activities";
 import {
   canOperateActivityStaff,
   sortQueueByCheckedInAt,
@@ -64,6 +69,7 @@ function BoardAlert({ message }: { message: string }) {
 export function MemberRepairActivityBoard({ activityId }: Props) {
   const router = useRouter();
   const copy = memberRepairActivitiesCopy.board;
+  const scanCopy = repairActivityCheckInCopy;
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [board, setBoard] = useState<StaffBoardView | null>(null);
   const [message, setMessage] = useState("");
@@ -86,6 +92,8 @@ export function MemberRepairActivityBoard({ activityId }: Props) {
   const [pendingNotice, setPendingNotice] = useState<StaffServeDraft | null>(null);
   /** 出勤成员弹层（issue #107）：仅活动管理员，只读名单。 */
   const [attendanceOpen, setAttendanceOpen] = useState(false);
+  /** 扫码签到弹窗（issue #126）：成员兜底签到入口，管理员在待签到区另有同款按钮。 */
+  const [scanOpen, setScanOpen] = useState(false);
   /**
    * 手机端分区切换（issue #108 审查稿）：<1100px 一次只展示一个分区。
    * 首次加载后落定默认分区（管理员优先「待签到」，成员固定「排队中」），
@@ -97,7 +105,8 @@ export function MemberRepairActivityBoard({ activityId }: Props) {
     checkInConfirmOpen ||
     withdrawTarget !== null ||
     pendingNotice !== null ||
-    attendanceOpen;
+    attendanceOpen ||
+    scanOpen;
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
 
@@ -468,6 +477,12 @@ export function MemberRepairActivityBoard({ activityId }: Props) {
             {busy === "attend" ? copy.attending : copy.attendCta}
           </Button>
         )}
+        {/* 扫码签到（issue #126）：成员的签到兜底入口（管理员在待签到区另有按钮）。 */}
+        {!board.canAdmin ? (
+          <Button icon="scan" onClick={() => setScanOpen(true)} disabled={opsDisabled}>
+            {scanCopy.scanCta}
+          </Button>
+        ) : null}
         {/* 出勤成员入口（issue #107）：仅活动管理员可见，人数实时取自看板数据。
             放在工具栏尾部靠右（CSS 的 auto 外边距），不与返回 / 出勤按钮抢行。 */}
         {board.canAdmin ? (
@@ -578,6 +593,10 @@ export function MemberRepairActivityBoard({ activityId }: Props) {
             )}
             <div className="activity-board__actions">
               <p className="muted m-0">{copy.selectHint}</p>
+              {/* 扫码签到（issue #126）：在手动勾选之外追加，不动原有签到流程。 */}
+              <Button icon="scan" onClick={() => setScanOpen(true)} disabled={opsDisabled}>
+                {scanCopy.scanCta}
+              </Button>
               <Button
                 variant="solid"
                 onClick={openCheckInConfirm}
@@ -863,6 +882,19 @@ export function MemberRepairActivityBoard({ activityId }: Props) {
           )}
           <p className="admin-note">{copy.attendanceNote}</p>
         </AdminModal>
+      ) : null}
+
+      {scanOpen ? (
+        <ScanCheckInDialog
+          activityId={activityId}
+          onClose={(completed) => {
+            setScanOpen(false);
+            if (completed) {
+              setToast({ text: scanCopy.checkInSuccess, tone: "success" });
+              void load();
+            }
+          }}
+        />
       ) : null}
     </div>
   );

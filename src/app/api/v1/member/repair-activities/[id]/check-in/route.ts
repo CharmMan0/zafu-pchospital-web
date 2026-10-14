@@ -1,6 +1,7 @@
 import {
-  bodyRegistrationIds,
   bodyCheckInIssueTypeUpdates,
+  bodyCheckInTokens,
+  bodyRegistrationIds,
 } from "@/features/repair-activities/repair-activity-http";
 import { repairActivityStaffService } from "@/features/repair-activities/repair-activity-staff-service";
 import { AppError } from "@/lib/api/errors";
@@ -19,6 +20,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const id = (await params).id;
     if (!id) throw new AppError("VALIDATION_FAILED", "活动 ID 无效");
     const body = (await request.json()) as Record<string, unknown>;
+    // 扫码签到（issue #126）：tokens 路径只要求 activity:staff（成员兜底），
+    // registrationIds 路径维持仅管理员（issue #108）；两者互斥。
+    if (body.tokens !== undefined) {
+      if (body.registrationIds !== undefined) {
+        throw new AppError("VALIDATION_FAILED", "tokens 与 registrationIds 只能二选一");
+      }
+      return apiSuccess(
+        await repairActivityStaffService.checkInByTokens(id, bodyCheckInTokens(body), actor),
+        requestId,
+      );
+    }
     const registrationIds = bodyRegistrationIds(body);
     return apiSuccess(
       await repairActivityStaffService.checkIn(

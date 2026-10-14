@@ -40,6 +40,11 @@ export const repairActivitiesPage = {
     signupSuccess: "报名成功。请按时到场，并保管好手机号以便查询。",
     lookupSuccess: "已找到报名记录，可修改故障类型。",
     updateSuccess: "故障类型已更新。",
+    /** 报名成功的预约二维码（issue #126）：弹层展示 + 截图保存提示。 */
+    qrTitle: "报名成功",
+    qrSubtitle: "请截图保存本二维码，到场后出示给工作人员扫码签到。",
+    qrLookupHint: "到场时请出示下方二维码，由工作人员扫码签到。",
+    qrClose: "我已保存",
     signupDisabled: "当前不可报名",
     upcomingDisabled: "报名尚未开始",
     closedDisabled: "报名已截止",
@@ -168,4 +173,45 @@ export const memberRepairActivitiesCopy = {
     pendingServeFill: "去填写",
     pendingServeDismiss: "知道了",
   },
+} as const;
+
+/**
+ * 扫码签到文案（issue #126）：工作台扫码弹窗与 /checkin 落地页共用，
+ * 组件不得硬编码。
+ */
+export const repairActivityCheckInCopy = {
+  /** 工作台「扫码签到」按钮（管理员待签到区 / 成员工具栏）。 */
+  scanCta: "扫码签到",
+  scanDialogTitle: "扫码为客户签到",
+  scanDialogHint: "将取景框对准客户手机上的预约二维码，识别后核对信息并确认。",
+  cameraStarting: "正在启动相机…",
+  /** 摄像头权限被拒 / 无相机：提示外链兜底（二维码本身就是签到链接）。 */
+  cameraUnavailable:
+    "无法打开相机（权限被拒绝或设备无摄像头）。可改用微信或系统相机扫描客户二维码，完成后回到本页；也可请管理员在待签到列表手动勾选签到。",
+  scanInvalid: "未识别到有效的预约二维码，请对准二维码并保持光线充足。",
+  scanFailed: "二维码解析失败，请重试。",
+  rescan: "重新扫描",
+  previewLoading: "正在读取报名记录…",
+  previewFailed: "报名记录读取失败，请重试。",
+  /** 确认弹层：核对客户信息后执行签到。 */
+  confirmTitle: "确认签到？",
+  confirmHint: "请核对客户信息，确认后该客户将进入排队等待接待。",
+  confirm: "确认签到",
+  confirmBusy: "签到中…",
+  cancel: "取消",
+  checkInSuccess: "已签到入队。",
+  checkInFailed: "签到失败，请重试。",
+  /** 该报名已签到/已接待，不可重复签到（preview 带出状态）。 */
+  notCheckInable: "该客户当前状态不可签到（可能已签到或已接待）。",
+  back: "返回",
+  doneClose: "完成",
+  /** /checkin 落地页（微信/系统相机扫二维码后打开）。 */
+  pageTitle: "活动签到",
+  pageLead: "核对客户信息，确认后客户即进入排队。",
+  loginRequiredTitle: "请先登录",
+  loginRequired: "请先用成员账号登录后再扫码签到；登录后重新扫描刚才的二维码即可继续。",
+  goLogin: "去登录",
+  forbiddenTitle: "无法签到",
+  forbidden: "当前账号没有活动签到权限，请联系管理员处理。",
+  tokenInvalid: "签到二维码无效或已过期，请与客户核对后重试。",
 } as const;

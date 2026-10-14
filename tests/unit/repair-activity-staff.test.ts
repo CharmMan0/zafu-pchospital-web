@@ -1,9 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+
+process.env.DATABASE_URL ??= "mysql://x:x@127.0.0.1:3306/x";
+process.env.AUTH_SECRET ??= "test-auth-secret-for-activity-staff";
+process.env.INVITE_CODE_PEPPER ??= "pepper";
+process.env.PII_AUDIT_PEPPER ??= "pii";
+
 import {
   bodyCheckInIssueTypeUpdates,
+  bodyCheckInTokens,
   bodyRegistrationIds,
 } from "../../src/features/repair-activities/repair-activity-http";
+import { issueCheckInToken } from "../../src/features/repair-activities/check-in-token";
+import { AppError } from "../../src/lib/api/errors";
+import { resetServerEnvForTests } from "../../src/lib/env";
+
+resetServerEnvForTests();
 
 import {
   canCheckInRegistration,
@@ -147,6 +159,32 @@ test("activityAt 转上海日历日", () => {
   assert.equal(shanghaiCalendarDay(new Date("2026-09-25T16:00:00.000Z")), "2026-09-26");
   // 同日白天
   assert.equal(shanghaiCalendarDay(new Date("2026-09-25T06:00:00.000Z")), "2026-09-25");
+});
+
+test("扫码签到：bodyCheckInTokens 规范化、限长，与 registrationIds 互斥在路由层", () => {
+  // 1–100 条、去空白与空项、超长拒绝。
+  assert.deepEqual(bodyCheckInTokens({ tokens: [" a ", "", "b"] }), ["a", "b"]);
+  assert.throws(() => bodyCheckInTokens({ tokens: [] }), AppError);
+  assert.throws(() => bodyCheckInTokens({ tokens: ["  "] }), AppError);
+  assert.throws(() => bodyCheckInTokens({ tokens: "x" }), AppError);
+  assert.throws(() => bodyCheckInTokens({ tokens: [null] }), AppError);
+  assert.throws(() => bodyCheckInTokens({ tokens: Array(101).fill("t") }), AppError);
+  assert.throws(() => bodyCheckInTokens({ tokens: ["x".repeat(513)] }), AppError);
+  assert.doesNotThrow(() => bodyCheckInTokens({ tokens: ["x".repeat(512)] }));
+});
+
+test("扫码文本与令牌载荷解析（issue #126）", async () => {
+  const { tokenFromScanText, activityIdFromCheckInToken } = await import(
+    "../../src/components/repair-activities/check-in-scan"
+  );
+  assert.equal(tokenFromScanText("https://pczafu.cn/checkin/abc.def"), "abc.def");
+  assert.equal(tokenFromScanText("/checkin/abc.def"), "abc.def");
+  assert.equal(tokenFromScanText("https://example.com/other"), null);
+  assert.equal(tokenFromScanText("随便一段文字"), null);
+
+  const token = issueCheckInToken("reg-1", "act-42", new Date("2026-10-20T16:00:00.000Z"));
+  assert.equal(activityIdFromCheckInToken(token), "act-42");
+  assert.equal(activityIdFromCheckInToken("not-a-token"), null);
 });
 
 /** 从 errors 模块读出状态映射（避免导出私有 defaultStatus）。 */

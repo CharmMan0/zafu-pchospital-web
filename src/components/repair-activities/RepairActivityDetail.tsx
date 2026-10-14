@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
 import { formatShanghaiDateTime } from "@/components/repair-activities/activity-format";
+import { AdminModal } from "@/components/admin/AdminModal";
 import { AdminToast, type AdminToastMessage } from "@/components/admin/AdminToast";
+import { RegistrationQrCode } from "@/components/repair-activities/RegistrationQrCode";
 import { repairActivityStatusBadgeClass } from "@/components/repair-activities/activity-status-badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -19,6 +21,7 @@ import {
 } from "@/features/repair-activities/repair-activity-validation";
 import type {
   RegistrationLookupView,
+  RegistrationPublicView,
   RepairActivityPublicView,
 } from "@/features/repair-activities/repair-activity-service";
 
@@ -40,6 +43,8 @@ export function RepairActivityDetail({ activityId }: Props) {
     issueType: string;
     deviceModel: string;
   } | null>(null);
+  /** 报名成功结果：携带签到令牌，弹层展示预约二维码（issue #126）。 */
+  const [signupResult, setSignupResult] = useState<RegistrationPublicView | null>(null);
   const signupFormRef = useRef<HTMLFormElement>(null);
 
   const load = useCallback(async () => {
@@ -101,6 +106,7 @@ export function RepairActivityDetail({ activityId }: Props) {
       });
       const json = (await response.json()) as {
         success: boolean;
+        data?: RegistrationPublicView;
         error?: { message?: string };
       };
       if (!json.success) {
@@ -111,6 +117,7 @@ export function RepairActivityDetail({ activityId }: Props) {
         setPendingSignup(null);
         setNotice({ text: copy.signupSuccess, tone: "success" });
         signupFormRef.current?.reset();
+        if (json.data) setSignupResult(json.data);
         await load();
       }
     } catch {
@@ -368,6 +375,13 @@ export function RepairActivityDetail({ activityId }: Props) {
                 {" · "}
                 {lookup.status}
               </p>
+              {/* 预约二维码（issue #126）：查询成功同样给出签到码；已签到/已接待后不再展示。 */}
+              {lookup.status === "REGISTERED" ? (
+                <div className="activity-detail__qr">
+                  <p className="muted m-0">{copy.qrLookupHint}</p>
+                  <RegistrationQrCode token={lookup.checkInToken} size={160} />
+                </div>
+              ) : null}
               {lookup.status !== "REGISTERED" ? (
                 <p className="muted">{copy.notEditable}</p>
               ) : (
@@ -420,6 +434,24 @@ export function RepairActivityDetail({ activityId }: Props) {
             </ol>
           </div>
         </ConfirmDialog>
+      ) : null}
+
+      {/* 报名成功的预约二维码（issue #126）：浮层展示，不参与页面布局，避免内容位移。 */}
+      {signupResult ? (
+        <AdminModal title={copy.qrTitle} onClose={() => setSignupResult(null)}>
+          <div className="admin-section">
+            <p className="muted">{copy.qrSubtitle}</p>
+            <p>
+              <strong>{signupResult.name}</strong> · {signupResult.phoneMasked}
+            </p>
+            <RegistrationQrCode token={signupResult.checkInToken} />
+            <div className="signup__actions">
+              <Button variant="solid" onClick={() => setSignupResult(null)}>
+                {copy.qrClose}
+              </Button>
+            </div>
+          </div>
+        </AdminModal>
       ) : null}
     </div>
   );
